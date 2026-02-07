@@ -1,0 +1,44 @@
+test_cuda.py
+
+venv
+
+__pycache__/
+*.pyc
+.ipynb_checkpoints
+
+agents\.env
+
+start-system.bat
+start-system.ps1
+
+conversation_store
+
+# Node.js dependencies
+node_modules/
+frontend/node_modules/
+
+# Next.js build output
+.next/
+frontend/.next/
+
+# Environment files
+.env
+.env.local
+.env.production
+frontend/.env.local
+
+# Package manager files
+package-lock.json
+yarn.lock
+
+# Build outputs
+dist/
+build/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
