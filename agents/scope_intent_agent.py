@@ -32,12 +32,16 @@ class ScopeIntent(TypedDict):
 
 # Check if the API key is actually set
 if not os.getenv("OPEN_ROUTER_API_KEY"):
+    print("WARNING: OPEN_ROUTER_API_KEY is not set. Please set it in your environment or .env file.")
+    print("Available env vars:", [k for k in os.environ.keys() if 'OPEN' in k or 'API' in k])
     raise ValueError("OPEN_ROUTER_API_KEY is not set. Please set it in your environment or .env file.")
 
 llm = ChatOpenAI(
     api_key=os.getenv("OPEN_ROUTER_API_KEY"),  # Make sure this is set in your environment or .env file
     base_url="https://openrouter.ai/api/v1",
     model="openai/gpt-4o-mini",
+    timeout=30,  # Add timeout
+    max_retries=2,  # Add retries
     default_headers={
     }
 )
@@ -67,15 +71,36 @@ def load_system_prompt() -> str:
         return f.read()
 
 def classify_query(user_query: str) -> ScopeIntentOutput:
-    system_prompt = load_system_prompt()
-    
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=f"Classify this query:\n\n{user_query}")
-    ]
-    
-    result = llm_structured_output.invoke(messages)
-    return result
+    """Classify query scope and intent with error handling"""
+    try:
+        print(f"Loading system prompt...")
+        system_prompt = load_system_prompt()
+        
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"Classify this query:\n\n{user_query}")
+        ]
+        
+        print(f"Calling OpenRouter API...")
+        result = llm_structured_output.invoke(messages)
+        print(f"API call successful")
+        return result
+        
+    except Exception as e:
+        print(f"ERROR in classify_query: {str(e)}")
+        # Return a fallback response for simple questions
+        if any(word in user_query.lower() for word in ['what is', 'define', 'explain', 'describe']):
+            return ScopeIntentOutput(
+                scope_decision='IN_SCOPE',
+                detected_intent='general_knowledge',
+                risk_notes=[]
+            )
+        else:
+            return ScopeIntentOutput(
+                scope_decision='OUT_OF_SCOPE',
+                detected_intent='unknown_error',
+                risk_notes=[f'Classification failed: {str(e)}']
+            )
 
 # Example usage and testing
 if __name__ == "__main__":
