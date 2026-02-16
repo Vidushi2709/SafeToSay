@@ -12,15 +12,17 @@ Scope & Intent Agent
 '''
 
 from langgraph.graph import StateGraph, START, END
-from langchain.chat_models import init_chat_model
 from os import getenv
 from dotenv import load_dotenv
-from typing import TypedDict, Annotated, operator, Literal
+from typing import TypedDict, Literal, Optional, List
 from pydantic import BaseModel, Field
 import os
 from pathlib import Path
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
+from langchain_mistralai import ChatMistralAI
+
+# Import Tavily search for research
+from agents.tavily_search import search_and_format_evidence, SearchSource, get_sources_for_display
 
 load_dotenv()
 
@@ -31,19 +33,15 @@ class ScopeIntent(TypedDict):
     
 
 # Check if the API key is actually set
-if not os.getenv("OPEN_ROUTER_API_KEY"):
-    print("WARNING: OPEN_ROUTER_API_KEY is not set. Please set it in your environment or .env file.")
-    print("Available env vars:", [k for k in os.environ.keys() if 'OPEN' in k or 'API' in k])
-    raise ValueError("OPEN_ROUTER_API_KEY is not set. Please set it in your environment or .env file.")
+if not os.getenv("MISTRAL_API_KEY"):
+    print("WARNING: MISTRAL_API_KEY is not set. Please set it in your environment or .env file.")
+    raise ValueError("MISTRAL_API_KEY is not set. Please set it in your environment or .env file.")
 
-llm = ChatOpenAI(
-    api_key=os.getenv("OPEN_ROUTER_API_KEY"),  # Make sure this is set in your environment or .env file
-    base_url="https://openrouter.ai/api/v1",
-    model="openai/gpt-4o-mini",
-    timeout=30,  # Add timeout
-    max_retries=2,  # Add retries
-    default_headers={
-    }
+llm = ChatMistralAI(
+    api_key=os.getenv("MISTRAL_API_KEY"),
+    model="mistral-large-latest",
+    timeout=30,
+    max_retries=2,
 )
 
 # Enhanced structured output model with reasoning
@@ -70,19 +68,52 @@ def load_system_prompt() -> str:
     with open(prompt_path, 'r', encoding='utf-8') as f:
         return f.read()
 
-def classify_query(user_query: str) -> ScopeIntentOutput:
+def classify_query(user_query: str, progress_callback=None) -> ScopeIntentOutput:
     """Classify query scope and intent with error handling"""
     try:
+        if progress_callback:
+            progress_callback({
+                'step': 'scope_analysis_loading',
+                'title': '📋 Loading Classification Rules',
+                'status': 'running',
+                'description': 'Loading medical scope and safety classification criteria'
+            })
+        
         print(f"Loading system prompt...")
         system_prompt = load_system_prompt()
+        
+        if progress_callback:
+            progress_callback({
+                'step': 'scope_analysis_parsing',
+                'title': '🔍 Analyzing Query Structure',
+                'status': 'running',
+                'description': 'Parsing query for medical intent and safety markers'
+            })
         
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=f"Classify this query:\n\n{user_query}")
         ]
         
-        print(f"Calling OpenRouter API...")
+        if progress_callback:
+            progress_callback({
+                'step': 'scope_analysis_api',
+                'title': '🤖 Processing with AI Model',
+                'status': 'running',
+                'description': 'Classifying query scope and detecting medical intent'
+            })
+        
+        print(f"Calling Mistral API...")
         result = llm_structured_output.invoke(messages)
+        
+        if progress_callback:
+            progress_callback({
+                'step': 'scope_analysis_validation',
+                'title': '✅ Validating Classification',
+                'status': 'running',
+                'description': 'Ensuring classification meets safety standards'
+            })
+        
         print(f"API call successful")
         return result
         
