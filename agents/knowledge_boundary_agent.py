@@ -11,25 +11,25 @@
 - Correct detection of insufficient knowledge
 - Abstention recalls
 '''
-from langchain.chat_models import init_chat_model
 from dotenv import load_dotenv
-from typing import TypedDict, Annotated, operator, Literal
+from typing import TypedDict, Literal, Optional, List
 from pydantic import BaseModel, Field
 import os
 from pathlib import Path
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
+from langchain_mistralai import ChatMistralAI
+
+# Import Tavily search for research
+from agents.tavily_search import search_and_format_evidence, SearchSource, get_sources_for_display
 
 load_dotenv()
 # Check if the API key is actually set
-if not os.getenv("OPEN_ROUTER_API_KEY"):
-    raise ValueError("OPEN_ROUTER_API_KEY is not set. Please set it in your environment or .env file.")
+if not os.getenv("MISTRAL_API_KEY"):
+    raise ValueError("MISTRAL_API_KEY is not set. Please set it in your environment or .env file.")
 
-llm = ChatOpenAI(
-    api_key=os.getenv("OPEN_ROUTER_API_KEY"),
-    base_url="https://openrouter.ai/api/v1",
-    model="openai/gpt-4o-mini",
-    default_headers={}
+llm = ChatMistralAI(
+    api_key=os.getenv("MISTRAL_API_KEY"),
+    model="mistral-large-latest",
 )
 
 # Input model - from Scope & Intent Agent

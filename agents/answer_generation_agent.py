@@ -16,9 +16,12 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 import torch
 from pydantic import BaseModel, Field
-from typing import Literal, Optional
+from typing import Literal, Optional, List
 import re
 from pathlib import Path
+
+# Import Tavily search for research
+from agents.tavily_search import search_and_format_evidence, SearchSource, get_sources_for_display
 
 model_id = "google/medgemma-4b-it"  
 
@@ -48,14 +51,14 @@ if cuda_available:
         model_id,
         quantization_config=bnb_config,
         device_map="cuda",  # Explicit CUDA device
-        dtype=torch.float16  # Use dtype (not deprecated torch_dtype)
+        torch_dtype=torch.float16  # Fixed: use torch_dtype instead of deprecated dtype
     ).eval()
 else:
     # Fallback to CPU (no quantization on CPU)
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         device_map="cpu",
-        dtype=torch.float32
+        torch_dtype=torch.float32  # Fixed: use torch_dtype instead of deprecated dtype
     ).eval()
 
 device = next(model.parameters()).device
@@ -76,20 +79,52 @@ class KnowledgeConstraints(BaseModel):
     confidence_risk: Literal['LOW', 'MEDIUM', 'HIGH'] = Field(description="Risk level based on knowledge gaps")
     required_knowledge: list[str] = Field(description="Knowledge domains needed to answer safely")
 
+class SourceInfo(BaseModel):
+    """Source information for citations"""
+    title: str = Field(description="Title of the source")
+    url: str = Field(description="URL of the source")
+    snippet: str = Field(default="", description="Brief content snippet")
+
 class AnswerGenerationInput(BaseModel):
     query: str = Field(description="The clinical question")
     allowed_intent: str = Field(description="Intent verified as IN_SCOPE by Scope & Intent Agent")
     evidence: list[str] = Field(description="Retrieved evidence snippets to constrain answer")
     knowledge_constraints: KnowledgeConstraints = Field(description="Constraints from Knowledge Boundary Agent")
+    sources: Optional[List[SourceInfo]] = Field(default=None, description="Source metadata for citations")
 
-# Simplified structured output model
+# Structured output model with sources
 class AnswerGenerationOutput(BaseModel):
     draft_answer: str = Field(description="Generated answer, explicitly marked as non-final draft")
+    sources: List[dict] = Field(default_factory=list, description="Sources used in generating the answer")
+
+def _clean_evidence_for_prompt(evidence: list[str]) -> list[str]:
+    """Pre-clean evidence before feeding it into the model prompt."""
+    cleaned = []
+    for ev in evidence:
+        e = re.sub(r'\[Source:[^\]]*\]', '', ev).strip()
+        e = re.sub(r'^\[Summary\]\s*', '', e).strip()
+        e = re.sub(r'\s*\[\.{2,}\]\s*', ' ', e).strip()
+        e = re.sub(r'\s*\[…\]\s*', ' ', e).strip()
+        e = re.sub(r'\[\d+(?:[,;\-–]\d+)*\]', '', e).strip()
+        # Truncate long evidence pieces
+        if len(e) > 400:
+            boundary = e[:400].rfind('. ')
+            if boundary > 150:
+                e = e[:boundary + 1]
+            else:
+                e = e[:400].rstrip() + '...'
+        e = re.sub(r'\s+', ' ', e).strip()
+        if e and len(e) > 20:
+            cleaned.append(e)
+    return cleaned
+
 
 def _build_user_prompt(question: str, evidence: list[str], intent: str) -> str:
     """Build the detailed user prompt with structured evidence context and constraints."""
     
-    evidence_context = "\n".join([f"{i+1}. {e}" for i, e in enumerate(evidence)])
+    # Pre-clean evidence before including in prompt
+    cleaned_evidence = _clean_evidence_for_prompt(evidence)
+    evidence_context = "\n".join([f"{i+1}. {e}" for i, e in enumerate(cleaned_evidence)])
     
     prompt = f"""CLINICAL QUESTION:
 {question}
@@ -178,52 +213,273 @@ def generate_constrained_answer(
         torch.cuda.empty_cache()
     
     generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    draft_answer = generated_text.split("DRAFT ANSWER:")[-1].strip()
+    
+    # Extract only the generated answer, stripping the prompt echo
+    draft_answer = _extract_answer_from_output(generated_text, full_prompt, answer_input)
     
     # Fallback: if generation produced minimal content, use evidence-based summary
     if not draft_answer or len(draft_answer) < 50:
-        evidence_summary = " ".join(answer_input.evidence[:2]) if answer_input.evidence else ""
-        draft_answer = format_clinical_response(
-            evidence_summary, 
-            answer_input.knowledge_constraints.confidence_risk
-        )
+        print(f"[INFO] Model generation was minimal ({len(draft_answer)} chars), creating evidence-based response")
+        
+        if answer_input.evidence:
+            draft_answer = _synthesize_from_evidence(
+                answer_input.query,
+                answer_input.evidence,
+                answer_input.knowledge_constraints.confidence_risk
+            )
+        else:
+            draft_answer = format_clinical_response(
+                "",
+                answer_input.knowledge_constraints.confidence_risk
+            )
     
     # Clean up any duplicate DRAFT markers
     draft_answer = clean_draft_markers(draft_answer)
     
-    # Ensure draft answer is marked as non-final (only once)
-    if not any(marker in draft_answer.upper() for marker in ['[DRAFT]', '[DRAFT -']):
-        draft_answer = f"[DRAFT - Not for Direct Clinical Use]\n\n{draft_answer}"
+    # No longer prepend DRAFT markers - frontend handles display cleanly
+    
+    # Extract sources from input if available
+    sources = []
+    if answer_input.sources:
+        sources = [
+            {
+                "title": src.title,
+                "url": src.url,
+                "snippet": src.snippet if hasattr(src, 'snippet') else ""
+            }
+            for src in answer_input.sources
+        ]
     
     return AnswerGenerationOutput(
-        draft_answer=draft_answer
+        draft_answer=draft_answer,
+        sources=sources
     )
 
-def clean_draft_markers(text: str) -> str:
-    """Remove duplicate DRAFT markers and clean formatting"""
-    # Remove duplicate DRAFT markers
+def _extract_answer_from_output(generated_text: str, full_prompt: str, answer_input) -> str:
+    """Extract only the actual answer from model output, stripping all prompt echoes."""
     import re
-    text = re.sub(r'\[DRAFT[^\]]*\]\s*\[DRAFT[^\]]*\]', '[DRAFT - Not for Direct Clinical Use]', text)
-    text = re.sub(r'\[DRAFT[^\]]*\]\s+\[DRAFT[^\]]*\]', '[DRAFT - Not for Direct Clinical Use]', text)
     
-    # Clean up extra spaces and newlines
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
+    # Strategy 1: Remove the exact prompt text if the model echoed it
+    # The model output starts with the prompt, so strip it
+    if full_prompt and generated_text.startswith(full_prompt[:200]):
+        draft_answer = generated_text[len(full_prompt):].strip()
+    else:
+        # Strategy 2: Split on "DRAFT ANSWER:" and take the last part
+        parts = generated_text.split("DRAFT ANSWER:")
+        draft_answer = parts[-1].strip() if len(parts) > 1 else generated_text.strip()
+    
+    # Strategy 3: If the answer still contains system prompt markers, aggressively strip them
+    # These are telltale signs the model echoed the prompt
+    system_prompt_markers = [
+        'CORE MISSION:', 'SOURCE CITATION REQUIREMENTS:', 'RESPONSE FORMATTING REQUIREMENTS:',
+        'CORE SAFETY CONSTRAINTS:', 'RESPONSE PATTERNS BY QUERY TYPE:', 'QUALITY STANDARDS:',
+        'PROHIBITED:', 'REQUIRED LANGUAGE PATTERNS:', 'You are MedGemma',
+        'clinical information synthesis engine', 'CLINICAL QUESTION:', 'INTENT:', 
+        'AVAILABLE EVIDENCE:', 'CRITICAL CONSTRAINTS:', 'TASK:',
+        'NO SPECIFIC DIAGNOSIS', 'EVIDENCE-BASED:', 'QUALIFIED LANGUAGE:',
+        'Factual/Educational Queries:', 'Medication/Treatment Queries:',
+        'High-Risk Diagnostic Queries:', 'professional supervision recommended',
+    ]
+    
+    # If multiple system prompt markers are found, try to find where real answer begins
+    marker_count = sum(1 for m in system_prompt_markers if m.lower() in draft_answer.lower())
+    if marker_count >= 3:
+        # The model heavily echoed the prompt — try to find the actual answer
+        # Look for the last occurrence of common prompt endings
+        prompt_end_markers = [
+            'DRAFT ANSWER:', 'Generate a constrained draft answer',
+            'Acknowledge what is not covered', 'never final clinical guidance',
+            'professional supervision recommended',
+        ]
+        last_pos = 0
+        for marker in prompt_end_markers:
+            pos = draft_answer.lower().rfind(marker.lower())
+            if pos > last_pos:
+                last_pos = pos + len(marker)
+        
+        if last_pos > 0:
+            draft_answer = draft_answer[last_pos:].strip()
+    
+    # Final cleanup
+    draft_answer = clean_draft_markers(draft_answer)
+    return draft_answer
+
+
+def clean_draft_markers(text: str) -> str:
+    """Remove duplicate DRAFT markers, prompt artifacts, and clean formatting."""
+    import re
+    # Remove all DRAFT markers
+    text = re.sub(r'\[DRAFT[^\]]*\]\s*', '', text)
+    
+    # Remove system prompt section headers that leaked through
+    prompt_headers = [
+        r'CORE MISSION:.*?(?=\n\n|$)',
+        r'SOURCE CITATION REQUIREMENTS:.*?(?=\n\n|$)',
+        r'RESPONSE FORMATTING REQUIREMENTS:.*?(?=\n\n|$)',
+        r'CORE SAFETY CONSTRAINTS:.*?(?=\n\n|$)',
+        r'RESPONSE PATTERNS BY QUERY TYPE:.*?(?=\n\n|$)',
+        r'QUALITY STANDARDS:.*?(?=\n\n|$)',
+        r'PROHIBITED:.*?(?=\n\n|$)',
+        r'REQUIRED LANGUAGE PATTERNS:.*?(?=\n\n|$)',
+        r'CLINICAL QUESTION:.*?(?=\n|$)',
+        r'INTENT:.*?(?=\n|$)',
+        r'AVAILABLE EVIDENCE:.*?(?=\n\n|$)',
+        r'CRITICAL CONSTRAINTS:.*?(?=\n\n|$)',
+        r'TASK:.*?(?=\n\n|$)',
+        r'DRAFT ANSWER:\s*',
+    ]
+    for pattern in prompt_headers:
+        text = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Remove lines that are clearly prompt instructions (not answer content)
+    instruction_patterns = [
+        r'^.*You are MedGemma.*$',
+        r'^.*clinical information synthesis engine.*$',
+        r'^.*NO SPECIFIC DIAGNOSIS.*$',
+        r'^.*EVIDENCE-BASED:.*$',
+        r'^.*SAFETY DISCLAIMERS:.*$',
+        r'^.*QUALIFIED LANGUAGE:.*$',
+        r'^.*Do not diagnose individual patients.*$',
+        r'^.*Base information on provided evidence.*$',
+        r'^.*Include appropriate warnings.*$',
+        r'^.*Use .may., .can., .typically..*rather than absolute.*$',
+        r'^.*Generate comprehensive.*evidence-based.*$',
+        r'^.*Support clinician decision-making.*$',
+        r'^.*Cite sources when evidence.*$',
+        r'^.*professional supervision recommended.*what.*$',
+        r'^.*Example structure for medication.*$',
+        r'^.*Vague, single-sentence responses.*$',
+        r'^.*Absolute statements without clinical context.*$',
+        r'^.*Patient-specific treatment decisions.*$',
+        r'^.*Diagnostic conclusions for individual.*$',
+        r'^.*requires clinical evaluation.*consult healthcare provider.*$',
+        r'^.*individual factors may vary.*$',
+        r'^.*\[Drug/Topic\].*Clinical Considerations.*$',
+        r'^.*\[Specific risk \d\].*$',
+        r'^.*\[Practical guidance \d\].*$',
+        r'^.*\[Key safety disclaimer\].*$',
+        r'^.*\[Key clinical concept\].*$',
+        r'^.*\[Core concept\].*$',
+        r'^.*\[Topic\].*Key Information.*$',
+        r'^.*\[Drug/Treatment\].*and.*\[Condition\].*$',
+    ]
+    for pattern in instruction_patterns:
+        text = re.sub(pattern, '', text, flags=re.MULTILINE | re.IGNORECASE)
+    
+    # Clean up excessive blank lines (3+ newlines -> 2)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # Clean up multiple spaces on same line (but preserve newlines)
+    text = re.sub(r'[^\S\n]+', ' ', text)
+    
+    # Remove leading/trailing whitespace on each line
+    lines = [line.strip() for line in text.split('\n')]
+    text = '\n'.join(lines)
+    
+    # Remove excessive blank lines again after all cleanup
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
+
+def _synthesize_from_evidence(query: str, evidence: list[str], confidence_risk: str) -> str:
+    """Synthesize a structured answer from evidence snippets instead of dumping them raw."""
+    import re
+    
+    # Extract the topic from the query
+    topic = query.strip().rstrip('?').strip()
+    for prefix in ['what is', 'what are', 'define', 'explain', 'describe', 'tell me about']:
+        if topic.lower().startswith(prefix):
+            topic = topic[len(prefix):].strip()
+            break
+    topic = topic.strip().title()
+    
+    # Clean each evidence piece of artifacts
+    cleaned_evidence = []
+    for ev in evidence:
+        clean = re.sub(r'\[Source:[^\]]*\]', '', ev).strip()
+        clean = re.sub(r'^\[Summary\]\s*', '', clean).strip()
+        clean = re.sub(r'\s*\[\.{2,}\]\s*', ' ', clean).strip()
+        clean = re.sub(r'\[\d+(?:[,;\-–]\d+)*\]', '', clean).strip()
+        if clean and len(clean) > 20:
+            cleaned_evidence.append(clean)
+    
+    if not cleaned_evidence:
+        return format_clinical_response("", confidence_risk)
+    
+    # Extract key facts by splitting on sentence boundaries
+    all_sentences = []
+    for ev in cleaned_evidence:
+        sentences = re.split(r'(?<=[.!?])\s+', ev)
+        for s in sentences:
+            s = s.strip()
+            if len(s) > 20 and s not in all_sentences:
+                all_sentences.append(s)
+    
+    # Deduplicate similar sentences (keep first occurrence)
+    unique_sentences = []
+    seen_content = set()
+    for s in all_sentences:
+        # Create a simplified key for dedup
+        key = re.sub(r'[^a-z0-9]', '', s.lower())[:60]
+        if key not in seen_content:
+            seen_content.add(key)
+            unique_sentences.append(s)
+    
+    # Take the best sentences (up to 8) to form key points
+    key_points = unique_sentences[:8]
+    
+    # Group into definition/overview and details
+    overview = []
+    details = []
+    for s in key_points:
+        if len(overview) < 3:
+            overview.append(s)
+        else:
+            details.append(s)
+    
+    # Build structured response with blank lines between every element
+    parts = []
+    parts.append(f"**{topic} — Clinical Overview**")
+    
+    if overview:
+        parts.append("**Overview:**")
+        for s in overview:
+            parts.append(s)
+    
+    if details:
+        parts.append("**Key Clinical Points:**")
+        for s in details:
+            parts.append(s)
+    
+    parts.append("**Important Considerations:**")
+    parts.append("Individual patient factors should be evaluated by a healthcare provider.")
+    parts.append("Clinical context and medical history may affect applicability.")
+    parts.append("This information is for educational purposes only.")
+    
+    parts.append("**Disclaimer:** This is general medical information and should not replace professional clinical advice. Always consult a qualified healthcare professional for patient-specific guidance.")
+    
+    # Join with double newlines so every element is its own paragraph
+    return "\n\n".join(parts)
+
 
 def format_clinical_response(evidence_summary: str, confidence_risk: str) -> str:
     """Format a clean, structured clinical response"""
     
-    formatted_response = f"""**Clinical Information:**
-{evidence_summary}
-
-**Important Considerations:**
-• This is a {confidence_risk} confidence risk situation
-• Individual patient factors must be evaluated
-• Clinical assessment and medical history are important
-• Healthcare provider consultation is recommended
-• Clinical judgment is required for patient-specific decisions
-
-**Disclaimer:** This information is for educational purposes only and should not replace professional medical advice."""
+    parts = []
+    parts.append("**Clinical Information:**")
+    if evidence_summary:
+        parts.append(evidence_summary)
+    
+    parts.append("**Important Considerations:**")
+    parts.append(f"This is a {confidence_risk} confidence risk situation.")
+    parts.append("Individual patient factors must be evaluated.")
+    parts.append("Clinical assessment and medical history are important.")
+    parts.append("Healthcare provider consultation is recommended.")
+    parts.append("Clinical judgment is required for patient-specific decisions.")
+    
+    parts.append("**Disclaimer:** This information is for educational purposes only and should not replace professional medical advice.")
+    
+    formatted_response = "\n\n".join(parts)
     
     return formatted_response
 
