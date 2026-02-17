@@ -1,0 +1,25 @@
+# Web Framework and API
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
+
+# Data Validation
+pydantic==2.5.0
+
+# LangChain and LangGraph for Agent Orchestration
+langgraph>=0.0.50
+langchain-core>=0.1.0
+langchain-mistralai>=0.1.0
+
+# ML/AI Models (MedGemma with PyTorch)
+torch>=2.1.0
+transformers>=4.35.0
+accelerate>=0.25.0
+bitsandbytes>=0.41.0
+sentencepiece>=0.1.99
+
+# Search and External APIs
+tavily-python==0.3.9
+
+# Environment and Configuration
+python-dotenv>=1.0.0
