@@ -2,73 +2,148 @@
 @tailwind components;
 @tailwind utilities;
 
-/* CSS Custom Properties for color scheme */
+/* ============================================
+   SafeToSay — Design System
+   ============================================ */
+
 :root {
-  --color-primary: #f97fbe;
-  --color-primary-light: #fba8d0;
-  --color-primary-dark: #e75a9c;
-  --color-dark: #000000;
-  --color-muted: #898989;
-  --color-background: #f0f0f0;
-  --color-light: #ffffff;
+  --color-primary: #0d9488;
+  --color-primary-light: #2dd4bf;
+  --color-primary-dark: #0f766e;
+  --color-accent: #f97fbe;
+  --color-dark: #0f172a;
+  --color-muted: #64748b;
+  --color-background: #f8fafc;
+  --color-surface: #ffffff;
+  --color-border: #e2e8f0;
+  --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* Custom scrollbar styles */
+/* Global font */
+body {
+  font-family: var(--font-family);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--color-background);
+  color: var(--color-dark);
+}
+
+/* ── Scrollbar ── */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 10px;
+  width: 6px;
 }
-
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: #e5e5e5;
-  border-radius: 5px;
+  background: transparent;
 }
-
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #999;
-  border-radius: 5px;
-  min-height: 50px;
-  border: 2px solid #e5e5e5;
+  background: #cbd5e1;
+  border-radius: 999px;
 }
-
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--color-primary);
 }
-
-/* Firefox scrollbar */
 .custom-scrollbar {
-  scrollbar-width: auto;
-  scrollbar-color: #999 #e5e5e5;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
-/* Animation for typing indicator */
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
+/* ── Typing indicator ── */
+@keyframes pulse-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
-
 .typing-indicator {
-  animation: pulse 1.5s ease-in-out infinite;
+  animation: pulse-cursor 1s ease-in-out infinite;
 }
 
-/* Smooth transitions */
-* {
-  transition-property: background-color, border-color, color, fill, stroke;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 150ms;
+/* ── Smooth transitions (only interactive props) ── */
+button, a, input, textarea {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Focus styles */
+/* ── Focus styles ── */
 *:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
-/* Selection colors */
+/* ── Selection ── */
 ::selection {
-  background-color: var(--color-primary);
-  color: white;
+  background-color: #ccfbf1;
+  color: var(--color-dark);
+}
+
+/* ── Gradient text helper ── */
+.gradient-text {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-light) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Message bubble animations ── */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.message-animate {
+  animation: fadeInUp 0.3s ease-out;
+}
+
+/* ── Progress step animation ── */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.progress-animate {
+  animation: slideIn 0.25s ease-out;
+}
+
+/* ── Shimmer loading ── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ── Bot message content formatting ── */
+.bot-message-content h3 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 2px solid #ccfbf1;
+}
+.bot-message-content h4 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #0d9488;
+  margin-bottom: 0.4rem;
+}
+.bot-message-content p {
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: #334155;
+}
+
+/* ── Sidebar hover glow ── */
+.thread-item-active {
+  box-shadow: 0 0 0 1px rgba(13, 148, 136, 0.3), 0 1px 3px rgba(13, 148, 136, 0.1);
 }

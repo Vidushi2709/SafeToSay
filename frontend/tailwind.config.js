@@ -5,58 +5,67 @@ module.exports = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+      },
       colors: {
-        // Primary accent color (pink)
+        // Primary — Teal (clinical, trustworthy)
         primary: {
+          DEFAULT: '#0d9488',
+          light: '#2dd4bf',
+          dark: '#0f766e',
+          50: '#f0fdfa',
+          100: '#ccfbf1',
+          200: '#99f6e4',
+          300: '#5eead4',
+          400: '#2dd4bf',
+          500: '#14b8a6',
+          600: '#0d9488',
+          700: '#0f766e',
+          800: '#115e59',
+          900: '#134e4a',
+        },
+        // Accent — pink (sparingly for highlights)
+        accent: {
           DEFAULT: '#f97fbe',
           light: '#fba8d0',
           dark: '#e75a9c',
-          50: '#fef1f7',
-          100: '#fde6f1',
-          200: '#fccce3',
-          300: '#fba8d0',
-          400: '#f97fbe',
-          500: '#f054a0',
-          600: '#e03380',
-          700: '#c22565',
-          800: '#a02254',
-          900: '#852148',
         },
-        // Dark color for text - changed to pure black
+        // Dark — slate for text
         dark: {
-          DEFAULT: '#181818',
-          50: '#f5f5f5',
-          100: '#e0e0e0',
-          200: '#b8b8b8',
-          300: '#8f8f8f',
-          400: '#666666',
-          500: '#4d4d4d',
-          600: '#333333',
-          700: '#262626',
-          800: '#1a1a1a',
-          900: '#181818',
+          DEFAULT: '#0f172a',
+          50: '#f8fafc',
+          100: '#f1f5f9',
+          200: '#e2e8f0',
+          300: '#cbd5e1',
+          400: '#94a3b8',
+          500: '#64748b',
+          600: '#475569',
+          700: '#334155',
+          800: '#1e293b',
+          900: '#0f172a',
         },
-        // Muted gray for secondary elements
+        // Muted
         muted: {
-          DEFAULT: '#898989',
-          light: '#a8a8a8',
-          dark: '#6a6a6a',
+          DEFAULT: '#64748b',
+          light: '#94a3b8',
+          dark: '#475569',
         },
-        // Background color
+        // Background
         background: {
-          DEFAULT: '#f0f0f0',
+          DEFAULT: '#f8fafc',
           light: '#ffffff',
-          dark: '#e5e5e5',
+          dark: '#f1f5f9',
         },
-        // Light color for cards
+        // Light surfaces
         light: {
-          DEFAULT: '#f0f0f0',
+          DEFAULT: '#f1f5f9',
           50: '#ffffff',
-          100: '#fafafa',
-          200: '#f5f5f5',
-          300: '#f0f0f0',
-          400: '#e5e5e5',
-          500: '#d4d4d4',
+          100: '#f8fafc',
+          200: '#f1f5f9',
+          300: '#e2e8f0',
+          400: '#cbd5e1',
+          500: '#94a3b8',
         },
       },
     },
