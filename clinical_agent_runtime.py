@@ -257,9 +257,21 @@ def answer_generation_node(state: AgentRuntimeState) -> AgentRuntimeState:
     print(f"Draft Answer: {result.draft_answer[:100]}...")
     print(f"Sources: {len(result.sources)} sources available")
     
-    # Pass draft answer and sources
+    # Pass draft answer
     state['draft_answer'] = result.draft_answer
-    state['sources'] = result.sources
+    
+    # FIX: Only overwrite sources if new sources were returned
+    # Convert SourceInfo objects or dicts to dict format if needed
+    if result.sources:
+        state['sources'] = [
+            {
+                'title': src.get('title', '') if isinstance(src, dict) else getattr(src, 'title', ''),
+                'url': src.get('url', '') if isinstance(src, dict) else getattr(src, 'url', ''),
+                'snippet': src.get('snippet', '') if isinstance(src, dict) else getattr(src, 'snippet', '')
+            }
+            for src in result.sources
+        ]
+    # else: keep existing sources from Tavily search - don't overwrite with empty list
     
     if progress_callback:
         progress_callback({
@@ -313,6 +325,10 @@ def evaluation_node(state: AgentRuntimeState) -> AgentRuntimeState:
     state['eval_critical_failures'] = result.critical_failures
     state['eval_rationale'] = result.rationale
     
+    # FIX: Explicitly carry forward sources
+    # LangGraph may drop keys that a node doesn't modify
+    state['sources'] = state.get('sources', [])
+    
     if progress_callback:
         avg_score = sum(state['eval_scores'].values()) / len(state['eval_scores'])
         progress_callback({
@@ -358,6 +374,9 @@ def decision_gate_node(state: AgentRuntimeState) -> AgentRuntimeState:
     # Pass decision
     state['final_decision'] = result.decision
     state['decision_reasoning'] = result.reasoning
+    
+    # FIX: Explicitly carry forward sources
+    state['sources'] = state.get('sources', [])
     
     if progress_callback:
         status_icon = '✅' if result.decision == 'ANSWER' else '⚠️' if result.decision == 'PARTIAL_ANSWER_WITH_WARNING' else '❌'
@@ -509,6 +528,9 @@ def run_clinical_pipeline(
     
     # Execute pipeline
     final_state = agent_graph.invoke(initial_state)
+    
+    # DEBUG: Verify sources made it through
+    print(f"\n[DEBUG] sources count in final_state: {len(final_state.get('sources', []))}")
     
     # For simple factual questions, override to ANSWER if we got a response
     if skip_strict_evaluation and final_state['draft_answer']:
