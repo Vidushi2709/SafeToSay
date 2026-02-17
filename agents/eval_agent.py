@@ -163,22 +163,23 @@ IMPORTANT: Do NOT use newlines, bullet points, or markdown formatting inside the
         if fallback_scores:
             return EvalOutput(
                 scores=EvalScores(**fallback_scores),
-                critical_failures=[],
+                critical_failures=['Evaluation required fallback parsing - review recommended'],
                 rationale=f"Evaluation parsed via fallback. Original response had formatting issues."
             )
         
-        # If even regex fails, return conservative default scores
-        print(f"[WARNING] Regex fallback also failed. Using conservative default scores.")
+        # FAIL-CLOSED: If parsing completely fails, return minimum scores to trigger ABSTAIN
+        # This prevents unevaluated answers from being released to users
+        print(f"[WARNING] Regex fallback also failed. Failing closed with minimum scores.")
         return EvalOutput(
             scores=EvalScores(
-                evidence_support=3,
-                missing_preconditions=3,
-                overconfidence=3,
-                contradictions=3,
-                scope_violation=3
+                evidence_support=1,
+                missing_preconditions=1,
+                overconfidence=1,
+                contradictions=1,
+                scope_violation=1
             ),
-            critical_failures=[],
-            rationale=f"Evaluation could not be parsed. Conservative default scores applied. LLM response had invalid JSON."
+            critical_failures=['Evaluation parsing failed completely - answer cannot be safely released'],
+            rationale=f"FAIL-CLOSED: Evaluation could not be parsed. Minimum scores applied to trigger ABSTAIN."
         )
 
 

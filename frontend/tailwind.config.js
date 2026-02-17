@@ -24,7 +24,7 @@ module.exports = {
         },
         // Dark color for text - changed to pure black
         dark: {
-          DEFAULT: '#000000',
+          DEFAULT: '#181818',
           50: '#f5f5f5',
           100: '#e0e0e0',
           200: '#b8b8b8',
@@ -34,7 +34,7 @@ module.exports = {
           600: '#333333',
           700: '#262626',
           800: '#1a1a1a',
-          900: '#000000',
+          900: '#181818',
         },
         // Muted gray for secondary elements
         muted: {

@@ -69,6 +69,55 @@ class AgentRuntimeState(TypedDict):
     final_decision: str
     decision_reasoning: str
 
+# ============================================================================
+# SAFE REFUSAL MESSAGES - Used when queries are OUT_OF_SCOPE
+# These are standardized, safe responses that never contain medical content
+# ============================================================================
+
+_REFUSAL_MESSAGES = {
+    'diagnosis_request': (
+        "I'm unable to provide a diagnosis. This system is designed for general "
+        "medical education and knowledge queries only — not for diagnosing "
+        "symptoms or conditions for any individual. Please consult a qualified "
+        "healthcare professional for patient-specific evaluation."
+    ),
+    'treatment_recommendation': (
+        "I'm unable to recommend treatments for specific patients. This system "
+        "provides general medical knowledge only. For treatment decisions, "
+        "please consult a qualified healthcare professional who can evaluate "
+        "the individual clinical context."
+    ),
+    'patient_specific_decision': (
+        "I'm unable to make patient-specific clinical decisions. This system "
+        "is designed for general medical education queries only. For decisions "
+        "about a specific patient, please consult a qualified healthcare provider."
+    ),
+    'emergency': (
+        "If this is a medical emergency, please call emergency services "
+        "immediately (e.g., 911 in the US). This system cannot provide "
+        "emergency medical advice."
+    ),
+    'default': (
+        "This query falls outside the scope of this system. I can only answer "
+        "general medical knowledge and education questions — not provide "
+        "diagnosis, treatment recommendations, or patient-specific advice. "
+        "Please consult a qualified healthcare professional."
+    ),
+}
+
+def _get_refusal_message(detected_intent: str, risk_notes: list[str]) -> str:
+    """Get the appropriate safe refusal message based on intent and risk flags."""
+    # Check for emergency first
+    if any('emergency' in note.lower() for note in risk_notes):
+        return _REFUSAL_MESSAGES['emergency']
+    
+    # Map intent to refusal message
+    if detected_intent in _REFUSAL_MESSAGES:
+        return _REFUSAL_MESSAGES[detected_intent]
+    
+    return _REFUSAL_MESSAGES['default']
+
+
 def scope_intent_node(state: AgentRuntimeState) -> AgentRuntimeState:
     """Node 1: Classify query scope and intent"""
     progress_callback = state.get('progress_callback')
@@ -106,6 +155,90 @@ def scope_intent_node(state: AgentRuntimeState) -> AgentRuntimeState:
                 'risk_notes': result.risk_notes
             }
         })
+    
+    return state
+
+
+def scope_router(state: AgentRuntimeState) -> str:
+    """
+    Conditional router after scope classification.
+    Routes OUT_OF_SCOPE queries directly to refusal, bypassing all downstream agents.
+    This is the critical safety gate — no medical content is generated for out-of-scope queries.
+    """
+    scope = state.get('scope_decision', 'OUT_OF_SCOPE')  # Fail-closed: default to OUT_OF_SCOPE
+    
+    if scope == 'IN_SCOPE':
+        print("[ROUTER] Query IN_SCOPE → proceeding to knowledge boundary analysis")
+        return 'knowledge_boundary'
+    else:
+        print(f"[ROUTER] Query {scope} → routing to REFUSAL (no medical content will be generated)")
+        return 'refusal'
+
+
+def refusal_node(state: AgentRuntimeState) -> AgentRuntimeState:
+    """
+    Safe refusal node for OUT_OF_SCOPE queries.
+    Generates a standardized rejection message without any medical content.
+    This node is the ONLY output path for out-of-scope queries.
+    """
+    progress_callback = state.get('progress_callback')
+    
+    if progress_callback:
+        progress_callback({
+            'step': 'refusal',
+            'title': '🚫 Query Out of Scope',
+            'status': 'running',
+            'description': 'Query classified as out of scope — generating safe refusal'
+        })
+    
+    print("\n[REFUSAL] Generating safe refusal response")
+    print(f"Intent: {state.get('detected_intent', 'unknown')}")
+    print(f"Risk Notes: {state.get('risk_notes', [])}")
+    
+    # Generate safe refusal message
+    refusal_message = _get_refusal_message(
+        state.get('detected_intent', 'unknown'),
+        state.get('risk_notes', [])
+    )
+    
+    # Set all downstream state to reflect refusal
+    state['draft_answer'] = refusal_message
+    state['final_decision'] = 'ABSTAIN'
+    state['decision_reasoning'] = (
+        f"SCOPE GATE: Query classified as {state.get('scope_decision', 'OUT_OF_SCOPE')}. "
+        f"Intent: {state.get('detected_intent', 'unknown')}. "
+        f"Risk flags: {', '.join(state.get('risk_notes', []))}. "
+        f"No medical content was generated."
+    )
+    state['confidence_risk'] = 'HIGH'
+    state['required_knowledge'] = []
+    state['knowledge_gaps'] = ['Query out of scope - refused at safety gate']
+    state['eval_scores'] = {
+        'evidence_support': 0,
+        'missing_preconditions': 0,
+        'overconfidence': 0,
+        'contradictions': 0,
+        'scope_violation': 0
+    }
+    state['eval_critical_failures'] = ['OUT_OF_SCOPE - query refused at safety gate']
+    state['eval_rationale'] = 'Query was out of scope. No answer was generated or evaluated.'
+    state['sources'] = []
+    
+    if progress_callback:
+        progress_callback({
+            'step': 'refusal',
+            'title': '🚫 Query Refused — Out of Scope',
+            'status': 'completed',
+            'description': f'Query safely refused. Intent: {state.get("detected_intent", "unknown")}',
+            'result': {
+                'decision': 'ABSTAIN',
+                'intent': state.get('detected_intent', 'unknown'),
+                'risk_notes': state.get('risk_notes', [])
+            }
+        })
+    
+    print(f"[REFUSAL] Decision: ABSTAIN")
+    print(f"[REFUSAL] Message: {refusal_message}")
     
     return state
 
@@ -188,8 +321,36 @@ def knowledge_boundary_node(state: AgentRuntimeState) -> AgentRuntimeState:
     return state
 
 def answer_generation_node(state: AgentRuntimeState) -> AgentRuntimeState:
-    """Node 3: Generate constrained answer"""
+    """Node 3: Generate constrained answer
+    
+    SAFETY: This node has a redundant scope check. Even though the graph router
+    should prevent OUT_OF_SCOPE queries from reaching here, this is defense-in-depth.
+    """
     progress_callback = state.get('progress_callback')
+    
+    # =====================================================================
+    # DEFENSE-IN-DEPTH: Redundant scope check
+    # Even though the graph router should prevent this, we double-check here.
+    # If scope is not IN_SCOPE, refuse to generate any medical content.
+    # =====================================================================
+    if state.get('scope_decision') != 'IN_SCOPE':
+        print(f"[AGENT 3] SAFETY BLOCK: scope_decision={state.get('scope_decision')} — refusing to generate")
+        refusal_message = _get_refusal_message(
+            state.get('detected_intent', 'unknown'),
+            state.get('risk_notes', [])
+        )
+        state['draft_answer'] = refusal_message
+        state['final_decision'] = 'ABSTAIN'
+        state['decision_reasoning'] = 'DEFENSE-IN-DEPTH: Answer generation blocked for out-of-scope query'
+        if progress_callback:
+            progress_callback({
+                'step': 'answer_generation',
+                'title': '🚫 Answer Generation Blocked',
+                'status': 'completed',
+                'description': 'Out-of-scope query — no medical content generated'
+            })
+        return state
+    
     if progress_callback:
         progress_callback({
             'step': 'answer_generation',
@@ -396,21 +557,48 @@ def decision_gate_node(state: AgentRuntimeState) -> AgentRuntimeState:
     return state
 
 def build_clinical_runtime_graph():
-    """Build the LangGraph state machine for agent orchestration"""
+    """
+    Build the LangGraph state machine for agent orchestration.
+    
+    ARCHITECTURE (with conditional safety routing):
+    
+        START → scope_intent → [ROUTER]
+                                  ├── IN_SCOPE → knowledge_boundary → answer_generation → evaluation → decision_gate → END
+                                  └── OUT_OF_SCOPE → refusal → END
+    
+    The router after scope_intent is the critical safety gate.
+    OUT_OF_SCOPE queries NEVER reach the answer generation model.
+    """
     
     # Create graph
     graph = StateGraph(AgentRuntimeState)
     
-    # Add nodes
+    # Add all nodes
     graph.add_node("scope_intent", scope_intent_node)
+    graph.add_node("refusal", refusal_node)  # NEW: Safe refusal for out-of-scope
     graph.add_node("knowledge_boundary", knowledge_boundary_node)
     graph.add_node("answer_generation", answer_generation_node)
     graph.add_node("evaluation", evaluation_node)
     graph.add_node("decision_gate", decision_gate_node)
     
-    # Define edges (fixed order)
+    # Start → scope classification
     graph.add_edge(START, "scope_intent")
-    graph.add_edge("scope_intent", "knowledge_boundary")
+    
+    # CRITICAL: Conditional routing after scope classification
+    # This is the safety gate — OUT_OF_SCOPE queries never reach answer generation
+    graph.add_conditional_edges(
+        "scope_intent",
+        scope_router,
+        {
+            "knowledge_boundary": "knowledge_boundary",  # IN_SCOPE path
+            "refusal": "refusal",                          # OUT_OF_SCOPE path
+        }
+    )
+    
+    # OUT_OF_SCOPE path: refusal → END (no further processing)
+    graph.add_edge("refusal", END)
+    
+    # IN_SCOPE path: normal pipeline continues
     graph.add_edge("knowledge_boundary", "answer_generation")
     graph.add_edge("answer_generation", "evaluation")
     graph.add_edge("evaluation", "decision_gate")
@@ -419,20 +607,28 @@ def build_clinical_runtime_graph():
     # Compile
     return graph.compile()
 
+# Compile graph once at module level (stateless, reusable across requests)
+_compiled_graph = build_clinical_runtime_graph()
+
 def run_clinical_pipeline(
     clinical_query: str,
     evidence: list[str] = None,
-    skip_strict_evaluation: bool = False,
     use_tavily_search: bool = True,
     progress_callback: callable = None,
 ) -> dict:
     """
     Execute the full clinical agent pipeline.
     
+    SAFETY ARCHITECTURE:
+    - Step 1: Scope classification (always runs)
+    - Step 2: If OUT_OF_SCOPE → refusal node → safe rejection (no medical content)
+    - Step 3: If IN_SCOPE → evidence search → answer generation → evaluation → decision gate
+    
+    OUT_OF_SCOPE queries NEVER reach the answer generation model.
+    
     Args:
         clinical_query: The clinical question from the user
         evidence: Retrieved evidence snippets to constrain answer (optional)
-        skip_strict_evaluation: If True, skip evaluation agent for simple factual questions
         use_tavily_search: If True and no evidence provided, use Tavily to search for evidence
         progress_callback: Callback function to report progress updates
     
@@ -500,11 +696,9 @@ def run_clinical_pipeline(
         evidence = []
     
     print(f"Evidence Sources: {len(evidence)}")
-    if skip_strict_evaluation:
-        print(f"Evaluation Mode: LENIENT (simple factual question detected)")
     
-    # Build graph
-    agent_graph = build_clinical_runtime_graph()
+    # Use pre-compiled graph (built once at module level)
+    agent_graph = _compiled_graph
     
     # Initialize state
     initial_state: AgentRuntimeState = {
@@ -529,13 +723,46 @@ def run_clinical_pipeline(
     # Execute pipeline
     final_state = agent_graph.invoke(initial_state)
     
+    # =====================================================================
+    # FINAL SAFETY ENFORCEMENT
+    # Regardless of what happened in the pipeline, enforce these invariants:
+    # 1. OUT_OF_SCOPE → always ABSTAIN
+    # 2. ABSTAIN → draft_answer must be a safe refusal, not medical content
+    # =====================================================================
+    
+    scope_decision = final_state.get('scope_decision', 'OUT_OF_SCOPE')
+    final_decision = final_state.get('final_decision', 'ABSTAIN')
+    
+    # Invariant 1: OUT_OF_SCOPE must always result in ABSTAIN
+    if scope_decision != 'IN_SCOPE' and final_decision != 'ABSTAIN':
+        print(f"[SAFETY] INVARIANT VIOLATION: scope={scope_decision} but decision={final_decision}. Forcing ABSTAIN.")
+        final_state['final_decision'] = 'ABSTAIN'
+        final_state['decision_reasoning'] = (
+            f"SAFETY OVERRIDE: Query was {scope_decision} but pipeline produced {final_decision}. "
+            f"Forced to ABSTAIN."
+        )
+        final_state['draft_answer'] = _get_refusal_message(
+            final_state.get('detected_intent', 'unknown'),
+            final_state.get('risk_notes', [])
+        )
+    
+    # Invariant 2: If ABSTAIN and scope was OUT_OF_SCOPE, ensure no medical content leaked
+    if final_state.get('final_decision') == 'ABSTAIN' and scope_decision != 'IN_SCOPE':
+        draft = final_state.get('draft_answer', '')
+        # Check if the draft answer looks like it contains medical content instead of a refusal
+        refusal_keywords = ['unable to', 'outside the scope', 'cannot provide', 'falls outside',
+                           'consult a qualified', 'emergency services']
+        is_refusal = any(kw in draft.lower() for kw in refusal_keywords)
+        if not is_refusal and len(draft) > 100:
+            # Medical content leaked through — replace with safe refusal
+            print(f"[SAFETY] CONTENT LEAK DETECTED: ABSTAIN with medical content. Replacing with safe refusal.")
+            final_state['draft_answer'] = _get_refusal_message(
+                final_state.get('detected_intent', 'unknown'),
+                final_state.get('risk_notes', [])
+            )
+    
     # DEBUG: Verify sources made it through
     print(f"\n[DEBUG] sources count in final_state: {len(final_state.get('sources', []))}")
-    
-    # For simple factual questions, override to ANSWER if we got a response
-    if skip_strict_evaluation and final_state['draft_answer']:
-        final_state['final_decision'] = 'ANSWER'
-        final_state['decision_reasoning'] = 'Simple factual question - informational answer provided'
     
     # Output results
     print("\n" + "=" * 100)

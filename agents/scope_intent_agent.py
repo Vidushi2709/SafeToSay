@@ -21,8 +21,7 @@ from pathlib import Path
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_mistralai import ChatMistralAI
 
-# Import Tavily search for research
-from agents.tavily_search import search_and_format_evidence, SearchSource, get_sources_for_display
+
 
 load_dotenv()
 
@@ -119,19 +118,13 @@ def classify_query(user_query: str, progress_callback=None) -> ScopeIntentOutput
         
     except Exception as e:
         print(f"ERROR in classify_query: {str(e)}")
-        # Return a fallback response for simple questions
-        if any(word in user_query.lower() for word in ['what is', 'define', 'explain', 'describe']):
-            return ScopeIntentOutput(
-                scope_decision='IN_SCOPE',
-                detected_intent='general_knowledge',
-                risk_notes=[]
-            )
-        else:
-            return ScopeIntentOutput(
-                scope_decision='OUT_OF_SCOPE',
-                detected_intent='unknown_error',
-                risk_notes=[f'Classification failed: {str(e)}']
-            )
+        # FAIL-CLOSED: Any classification failure defaults to OUT_OF_SCOPE
+        # This prevents unsafe queries from passing through during API outages
+        return ScopeIntentOutput(
+            scope_decision='OUT_OF_SCOPE',
+            detected_intent='classification_error',
+            risk_notes=[f'Classification failed (fail-closed): {str(e)}']
+        )
 
 # Example usage and testing
 if __name__ == "__main__":
