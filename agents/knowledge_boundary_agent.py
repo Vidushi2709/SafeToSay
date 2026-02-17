@@ -19,8 +19,7 @@ from pathlib import Path
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_mistralai import ChatMistralAI
 
-# Import Tavily search for research
-from agents.tavily_search import search_and_format_evidence, SearchSource, get_sources_for_display
+
 
 load_dotenv()
 # Check if the API key is actually set

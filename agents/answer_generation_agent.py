@@ -20,53 +20,67 @@ from typing import Literal, Optional, List
 import re
 from pathlib import Path
 
-# Import Tavily search for research
-from agents.tavily_search import search_and_format_evidence, SearchSource, get_sources_for_display
 
-model_id = "google/medgemma-4b-it"  
 
-# Check CUDA availability
-if torch.cuda.is_available():
-    print(f"[INFO] ✓ CUDA Available")
-    print(f"[INFO] GPU Device: {torch.cuda.get_device_name(0)}")
-    print(f"[INFO] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
-    cuda_available = True
-else:
-    print(f"[WARNING] CUDA not available - falling back to CPU")
-    cuda_available = False
+model_id = "google/medgemma-4b-it"
 
-tokenizer = AutoTokenizer.from_pretrained(model_id)
+# Lazy model loading - model is loaded on first use, not at import time
+# This prevents the API server from blocking during startup
+_model = None
+_tokenizer = None
 
-# 4-bit quantization config for efficient GPU loading
-bnb_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_compute_dtype=torch.float16
-)
+def _ensure_model_loaded():
+    """Load model and tokenizer on first use to avoid blocking at import time."""
+    global _model, _tokenizer
+    if _tokenizer is not None:
+        return _tokenizer, _model
+    
+    print(f"[INFO] Loading MedGemma model: {model_id}")
+    
+    # Check CUDA availability
+    if torch.cuda.is_available():
+        print(f"[INFO] ✓ CUDA Available")
+        print(f"[INFO] GPU Device: {torch.cuda.get_device_name(0)}")
+        print(f"[INFO] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        cuda_available = True
+    else:
+        print(f"[WARNING] CUDA not available - falling back to CPU")
+        cuda_available = False
+    
+    _tokenizer = AutoTokenizer.from_pretrained(model_id)
+    
+    # 4-bit quantization config for efficient GPU loading
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16
+    )
+    
+    print(f"[INFO] Loading MedGemma with 4-bit quantization...")
+    
+    if cuda_available:
+        _model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            quantization_config=bnb_config,
+            device_map="cuda",
+            torch_dtype=torch.float16
+        ).eval()
+    else:
+        _model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            device_map="cpu",
+            torch_dtype=torch.float32
+        ).eval()
+    
+    # Set pad token to prevent generation issues
+    if _tokenizer.pad_token is None:
+        _tokenizer.pad_token = _tokenizer.eos_token
+    
+    device = next(_model.parameters()).device
+    print(f"[INFO] ✓ Model loaded on device: {device}")
+    
+    return _tokenizer, _model
 
-print(f"[INFO] Loading MedGemma with 4-bit quantization...")
-
-if cuda_available:
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        quantization_config=bnb_config,
-        device_map="cuda",  # Explicit CUDA device
-        torch_dtype=torch.float16  # Fixed: use torch_dtype instead of deprecated dtype
-    ).eval()
-else:
-    # Fallback to CPU (no quantization on CPU)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        device_map="cpu",
-        torch_dtype=torch.float32  # Fixed: use torch_dtype instead of deprecated dtype
-    ).eval()
-
-device = next(model.parameters()).device
-print(f"[INFO] ✓ Model loaded on device: {device}")
-
-# Set pad token to prevent generation issues
-if tokenizer.pad_token is None:
-    tokenizer.pad_token = tokenizer.eos_token
 
 def load_system_prompt() -> str:
     """Load the answer generation system prompt from file."""
@@ -164,10 +178,23 @@ def generate_constrained_answer(
     Returns:
         AnswerGenerationOutput with draft answer (non-final)
     """
+    # Ensure model is loaded (lazy initialization)
+    tokenizer, model = _ensure_model_loaded()
+    
     # Load system prompt at runtime
     system_instructions = load_system_prompt()
     user_prompt = _build_user_prompt(answer_input.query, answer_input.evidence, answer_input.allowed_intent)
-    full_prompt = f"{system_instructions}\n\n{user_prompt}"
+    
+    # Use chat template to prevent prompt echo in generation
+    chat_messages = [
+        {"role": "user", "content": f"{system_instructions}\n\n{user_prompt}"}
+    ]
+    try:
+        full_prompt = tokenizer.apply_chat_template(
+            chat_messages, tokenize=False, add_generation_prompt=True
+        )
+    except Exception:
+        full_prompt = f"{system_instructions}\n\n{user_prompt}"
     
     # Tokenize with attention mask
     inputs = tokenizer(full_prompt, return_tensors="pt", truncation=True, max_length=2048)

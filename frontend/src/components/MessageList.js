@@ -300,10 +300,10 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
             with citations and clear reasoning.
           </p>
           <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-3 max-w-lg">
-            <ExamplePrompt text="What are the symptoms of type 2 diabetes?" />
-            <ExamplePrompt text="How do beta-blockers work?" />
-            <ExamplePrompt text="What's the treatment for hypertension?" />
-            <ExamplePrompt text="What is amoxicillin used for?" />
+            <ExamplePrompt text="What are the symptoms of type 2 diabetes?" onClick={onFollowUpClick} />
+            <ExamplePrompt text="How do beta-blockers work?" onClick={onFollowUpClick} />
+            <ExamplePrompt text="What's the treatment for hypertension?" onClick={onFollowUpClick} />
+            <ExamplePrompt text="What is amoxicillin used for?" onClick={onFollowUpClick} />
           </div>
         </div>
       )}
@@ -381,9 +381,8 @@ const MessageBubble = ({ message, formatTimestamp, renderStructuredText, onFollo
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div className={`flex items-start gap-3 max-w-[80%] ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
         {/* Avatar */}
-        <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-          isUser ? 'bg-primary' : isError ? 'bg-red-100' : 'bg-primary/10'
-        }`}>
+        <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isUser ? 'bg-primary' : isError ? 'bg-red-100' : 'bg-primary/10'
+          }`}>
           {isUser ? (
             <User className="w-4 h-4 text-white" />
           ) : (
@@ -393,13 +392,12 @@ const MessageBubble = ({ message, formatTimestamp, renderStructuredText, onFollo
 
         {/* Message content */}
         <div className="flex flex-col">
-          <div className={`rounded-2xl px-4 py-3 shadow-sm relative ${
-            isUser 
-              ? 'bg-primary text-white rounded-tr-sm' 
+          <div className={`rounded-2xl px-4 py-3 shadow-sm relative ${isUser
+              ? 'bg-primary text-white rounded-tr-sm'
               : isError
                 ? 'bg-red-50 text-red-700 rounded-tl-sm border border-red-200'
                 : 'bg-white text-dark rounded-tl-sm border border-gray-200'
-          }`}>
+            }`}>
             {isUser ? (
               <p className="whitespace-pre-wrap text-sm">{message.content}</p>
             ) : (
@@ -445,7 +443,7 @@ const MessageBubble = ({ message, formatTimestamp, renderStructuredText, onFollo
               </div>
             )}
           </div>
-          
+
           {/* Timestamp */}
           {message.timestamp && (
             <p className={`text-xs text-muted mt-1 ${isUser ? 'text-right' : 'text-left'}`}>
@@ -458,8 +456,14 @@ const MessageBubble = ({ message, formatTimestamp, renderStructuredText, onFollo
   );
 };
 
-const ExamplePrompt = ({ text }) => (
-  <div className="bg-white border border-gray-200 rounded-lg p-3 text-sm text-muted hover:border-primary hover:text-primary cursor-pointer transition-colors">
+const ExamplePrompt = ({ text, onClick }) => (
+  <div
+    className="bg-white border border-gray-200 rounded-lg p-3 text-sm text-muted hover:border-primary hover:text-primary cursor-pointer transition-colors"
+    onClick={() => onClick && onClick(text)}
+    role="button"
+    tabIndex={0}
+    onKeyDown={(e) => e.key === 'Enter' && onClick && onClick(text)}
+  >
     {text}
   </div>
 );

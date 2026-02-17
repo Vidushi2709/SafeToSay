@@ -54,12 +54,26 @@ def decision_gate(eval_result: EvalResult) -> GateDecision:
     min_score = min(scores.values())
     avg_score = sum(scores.values()) / len(scores)
     
+    # Rule 0: ANY critical failure → immediate ABSTAIN regardless of scores
+    # Critical failures represent safety-breaking issues that scores alone cannot capture
+    if critical_failures:
+        reasoning = (
+            f"CRITICAL FAILURE DETECTED: {', '.join(critical_failures)}. "
+            f"Automatic ABSTAIN triggered. Scores: {scores}"
+        )
+        return GateDecision(
+            decision="ABSTAIN",
+            reasoning=reasoning,
+            min_score=min_score,
+            avg_score=avg_score
+        )
+    
     # Rule 1: Complete failure - ALL dimensions are 1 or any dimension is 0 → ABSTAIN
     all_ones = all(score == 1 for score in scores.values())
     if min_score == 0 or all_ones:
         reasoning = (
             f"COMPLETE FAILURE: All scores are critically low. "
-            f"Scores: {scores}. Critical failures: {critical_failures if critical_failures else 'None'}"
+            f"Scores: {scores}."
         )
         return GateDecision(
             decision="ABSTAIN",
