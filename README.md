@@ -1,4 +1,4 @@
-# 🏥 MedGemma Clinical AI Agent System
+# 🏥 SafeToSay - Clinical AI Agent System
 
 ## Overview
 
