@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Paperclip } from 'lucide-react';
+import { Send } from 'lucide-react';
 
 const MessageInput = ({ onSendMessage, disabled, placeholder }) => {
   const [message, setMessage] = useState('');
@@ -18,7 +18,6 @@ const MessageInput = ({ onSendMessage, disabled, placeholder }) => {
     if (message.trim() && !disabled) {
       onSendMessage(message.trim());
       setMessage('');
-      // Reset textarea height
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
       }
@@ -26,7 +25,6 @@ const MessageInput = ({ onSendMessage, disabled, placeholder }) => {
   };
 
   const handleKeyDown = (e) => {
-    // Submit on Enter (without Shift)
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
@@ -34,29 +32,19 @@ const MessageInput = ({ onSendMessage, disabled, placeholder }) => {
   };
 
   return (
-    <div className="border-t border-gray-200 bg-white p-4">
+    <div className="border-t border-slate-200 bg-white px-4 py-3">
       <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
-        <div className="flex items-end space-x-3 bg-light rounded-2xl border border-gray-200 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 transition-all">
-          {/* Attachment button (placeholder for future feature) */}
-          <button
-            type="button"
-            className="p-3 text-muted hover:text-primary transition-colors"
-            title="Attach file (coming soon)"
-            disabled
-          >
-            <Paperclip className="w-5 h-5" />
-          </button>
-
+        <div className="flex items-end space-x-2 bg-slate-50 rounded-2xl border border-slate-200 focus-within:border-teal-400 focus-within:ring-2 focus-within:ring-teal-100 transition-all px-4 py-2">
           {/* Text input */}
           <textarea
             ref={textareaRef}
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={placeholder || 'Type your message...'}
+            placeholder={placeholder || 'Ask a medical question...'}
             disabled={disabled}
             rows={1}
-            className="flex-1 resize-none bg-transparent py-3 px-1 text-dark placeholder-muted focus:outline-none disabled:opacity-50"
+            className="flex-1 resize-none bg-transparent py-1.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none disabled:opacity-50 leading-relaxed"
             style={{ maxHeight: '200px' }}
           />
 
@@ -64,20 +52,19 @@ const MessageInput = ({ onSendMessage, disabled, placeholder }) => {
           <button
             type="submit"
             disabled={!message.trim() || disabled}
-            className={`p-3 rounded-xl m-1 transition-all ${
-              message.trim() && !disabled
-                ? 'bg-primary text-white hover:bg-primary-dark shadow-md hover:shadow-lg'
-                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-            }`}
+            className={`flex-shrink-0 p-2.5 rounded-xl transition-all ${message.trim() && !disabled
+                ? 'bg-gradient-to-r from-teal-600 to-teal-700 text-white shadow-sm hover:shadow-md hover:from-teal-700 hover:to-teal-800'
+                : 'bg-slate-100 text-slate-300 cursor-not-allowed'
+              }`}
             title="Send message"
           >
-            <Send className="w-5 h-5" />
+            <Send className="w-4 h-4" />
           </button>
         </div>
 
         {/* Helper text */}
-        <p className="text-xs text-muted text-center mt-2">
-          Press Enter to send, Shift+Enter for new line
+        <p className="text-[11px] text-slate-400 text-center mt-1.5">
+          Enter to send · Shift+Enter for new line · <span className="text-teal-500">Safety gates active on every query</span>
         </p>
       </form>
     </div>

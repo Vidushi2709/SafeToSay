@@ -1,10 +1,9 @@
 import React, { useRef, useEffect } from 'react';
-import { User, Bot, CheckCircle, Loader, AlertCircle, ExternalLink } from 'lucide-react';
+import { User, Bot, CheckCircle, Loader, AlertCircle, ExternalLink, ShieldCheck, ShieldAlert } from 'lucide-react';
 
 const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = [], onOpenReadingPanel, onFollowUpClick }) => {
   const bottomRef = useRef(null);
 
-  // Auto-scroll to bottom when messages change or streaming updates
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingMessage]);
@@ -16,18 +15,14 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
   };
 
   /**
-   * Clean the raw response content — strip prompt artifacts, evidence dumps,
-   * DRAFT markers, server logs, and other metadata that shouldn't be shown.
+   * Clean raw response content — strip prompt artifacts, evidence dumps, and metadata.
    */
   const cleanContent = (content) => {
     if (!content) return '';
-
     let cleaned = content;
 
-    // Remove [DRAFT ...] markers
     cleaned = cleaned.replace(/\[DRAFT[^\]]*\]\s*/gi, '');
 
-    // ── System prompt section headers & blocks ──
     const sectionHeaders = [
       'CORE MISSION', 'SOURCE CITATION REQUIREMENTS', 'RESPONSE FORMATTING REQUIREMENTS',
       'CORE SAFETY CONSTRAINTS', 'RESPONSE PATTERNS BY QUERY TYPE', 'QUALITY STANDARDS',
@@ -35,12 +30,10 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
       'AVAILABLE EVIDENCE', 'CRITICAL CONSTRAINTS', 'TASK', 'DRAFT ANSWER'
     ];
     for (const header of sectionHeaders) {
-      // Remove header + content until next double-newline section or end
       const re = new RegExp(`${header}:[\\s\\S]*?(?=\\n\\n[A-Z*#]|\\n\\n\\*\\*|$)`, 'gi');
       cleaned = cleaned.replace(re, '');
     }
 
-    // ── Lines that are clearly prompt instructions, not answer content ──
     const instructionPatterns = [
       /^.*You are MedGemma.*$/gim,
       /^.*clinical information synthesis engine.*$/gim,
@@ -91,92 +84,69 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
       cleaned = cleaned.replace(pattern, '');
     }
 
-    // Remove numbered evidence blocks like "1. [Summary] ..." or raw evidence lines
     cleaned = cleaned.replace(/^\d+\.\s*\[Summary\].*(?:\n|$)/gim, '');
-
-    // Remove "[Source: ...]" inline tags
     cleaned = cleaned.replace(/\[Source:[^\]]*\]/gi, '');
-
-    // Remove "[Summary]" prefix tags
     cleaned = cleaned.replace(/\[Summary\]\s*/gi, '');
-
-    // Remove [...] and […] truncation markers
     cleaned = cleaned.replace(/\s*\[\.{2,}\]\s*/g, ' ');
     cleaned = cleaned.replace(/\s*\[…\]\s*/g, ' ');
-
-    // Remove bare reference numbers like [1], [2,3], [1-5] but keep [mg/dL] etc.
     cleaned = cleaned.replace(/\[(\d+(?:[,;\-–]\d+)*)\]/g, '');
-
-    // Remove server log lines
     cleaned = cleaned.replace(/^INFO:.*$/gm, '');
     cleaned = cleaned.replace(/^WARNING:.*$/gm, '');
     cleaned = cleaned.replace(/^ERROR:.*$/gm, '');
-
-    // Collapse excessive blank lines
     cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-
-    // Collapse multiple spaces (but not newlines)
     cleaned = cleaned.replace(/[^\S\n]+/g, ' ');
 
     return cleaned.trim();
   };
 
   /**
-   * Render structured text with proper formatting for markdown-like content.
-   * Groups content under each heading into visually distinct section blocks.
+   * Render structured text with proper formatting.
    */
   const renderStructuredText = (rawContent) => {
     const content = cleanContent(rawContent);
-    if (!content) return <p className="text-gray-400 italic">No response content.</p>;
+    if (!content) return <p className="text-slate-400 italic text-sm">No response content.</p>;
 
     const lines = content.split('\n');
 
-    // ── First pass: parse lines into typed tokens ──
+    // Parse lines into tokens
     const tokens = [];
     for (let i = 0; i < lines.length; i++) {
       const trimmed = lines[i].trim();
       if (!trimmed) continue;
 
-      // ## / ### markdown header
       const headerMatch = trimmed.match(/^(#{1,4})\s+(.+)/);
       if (headerMatch) {
         tokens.push({ type: 'heading', level: headerMatch[1].length, text: headerMatch[2].replace(/\*\*/g, ''), idx: i });
         continue;
       }
 
-      // **Bold Header:** or **Bold Header** (short line acts as section title)
       const boldLineMatch = trimmed.match(/^\*\*(.+?)\*\*:?\s*$/);
       if (boldLineMatch && trimmed.length < 120) {
-        // Treat "— Clinical Overview" style as level-1, others as level-2
         const isTitle = /overview|summary/i.test(boldLineMatch[1]) || tokens.length === 0;
         tokens.push({ type: 'heading', level: isTitle ? 1 : 2, text: boldLineMatch[1], idx: i });
         continue;
       }
 
-      // Bullet / numbered list item
       const bulletMatch = trimmed.match(/^[-*•]\s+(.+)/);
       if (bulletMatch) { tokens.push({ type: 'bullet', text: bulletMatch[1], idx: i }); continue; }
       const numMatch = trimmed.match(/^\d+\.\s+(.+)/);
       if (numMatch) { tokens.push({ type: 'bullet', text: numMatch[1], idx: i }); continue; }
 
-      // Callout: Important / Note / Disclaimer / Warning / Critical
       const calloutMatch = trimmed.match(/^\*?\*?(Important|Note|Critical|Warning|Disclaimer)\*?\*?:\s*(.+)/i);
       if (calloutMatch) {
         tokens.push({ type: 'callout', label: calloutMatch[1], text: calloutMatch[2], idx: i });
         continue;
       }
 
-      // Regular paragraph
       tokens.push({ type: 'para', text: trimmed, idx: i });
     }
 
-    // ── Second pass: group tokens into sections (heading → body) ──
-    const sections = [];  // { heading?, children[] }
+    // Group tokens into sections
+    const sections = [];
     let current = { heading: null, children: [] };
 
     for (const tok of tokens) {
       if (tok.type === 'heading') {
-        // Flush previous section
         if (current.heading || current.children.length > 0) {
           sections.push(current);
         }
@@ -187,7 +157,7 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
     }
     if (current.heading || current.children.length > 0) sections.push(current);
 
-    // ── Third pass: render each section as a distinct visual block ──
+    // Render sections
     return sections.map((section, sIdx) => {
       const children = [];
       let bulletBuf = [];
@@ -195,11 +165,10 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
 
       const flushBullets = () => {
         if (bulletBuf.length > 0) {
-          // Render each bullet as its own spaced paragraph block
           bulletBuf.forEach((b, j) => {
             children.push(
-              <div key={`bl-${sIdx}-${bulletKey}-${j}`} className="flex items-start gap-2 text-sm text-gray-700 mb-3">
-                <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-pink-400 flex-shrink-0" />
+              <div key={`bl-${sIdx}-${bulletKey}-${j}`} className="flex items-start gap-2.5 text-sm text-slate-700 mb-2">
+                <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-teal-400 flex-shrink-0" />
                 <span className="leading-relaxed">{renderInlineFormatting(b)}</span>
               </div>
             );
@@ -219,20 +188,19 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
         if (tok.type === 'callout') {
           const ct = tok.label.toLowerCase();
           const color = ct === 'disclaimer'
-            ? 'bg-gray-50 border-gray-300 text-gray-700'
+            ? 'bg-slate-50 border-slate-300 text-slate-600'
             : ct === 'critical' || ct === 'warning'
               ? 'bg-red-50 border-red-300 text-red-800'
               : 'bg-amber-50 border-amber-300 text-amber-800';
           children.push(
-            <div key={`co-${tok.idx}`} className={`${color} border-l-4 px-3 py-2 rounded-r text-sm`}>
+            <div key={`co-${tok.idx}`} className={`${color} border-l-4 px-3 py-2 rounded-r text-sm mt-2`}>
               <span className="font-semibold">{tok.label}:</span>{' '}
               {renderInlineFormatting(tok.text)}
             </div>
           );
         } else {
-          // paragraph
           children.push(
-            <p key={`p-${tok.idx}`} className="text-sm text-gray-700 leading-relaxed">
+            <p key={`p-${tok.idx}`} className="text-sm text-slate-700 leading-relaxed">
               {renderInlineFormatting(tok.text)}
             </p>
           );
@@ -240,7 +208,6 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
       }
       flushBullets();
 
-      // Determine heading style
       const isTitle = section.heading && section.heading.level <= 1;
 
       return (
@@ -248,22 +215,23 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
           key={`sec-${sIdx}`}
           className={
             isTitle
-              ? 'mb-4'                                          // title — no card, just spacing
-              : 'bg-gray-50 rounded-lg border border-gray-100 p-4 mb-3'  // section card
+              ? 'mb-3'
+              : 'bg-slate-50/70 rounded-xl border border-slate-100 p-4 mb-3'
           }
         >
           {section.heading && (
             isTitle ? (
-              <h3 className="text-base font-bold text-gray-900 mb-2 pb-1 border-b border-pink-200">
+              <h3 className="text-[15px] font-bold text-slate-900 mb-2 pb-1.5 border-b-2 border-teal-200">
                 {section.heading.text}
               </h3>
             ) : (
-              <h4 className="text-sm font-semibold text-pink-600 mb-2">
+              <h4 className="text-sm font-semibold text-teal-700 mb-2 flex items-center gap-1.5">
+                <span className="w-1 h-4 rounded-full bg-teal-400 flex-shrink-0" />
                 {section.heading.text}
               </h4>
             )
           )}
-          <div className="space-y-3">{children}</div>
+          <div className="space-y-2">{children}</div>
         </div>
       );
     });
@@ -274,12 +242,11 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
    */
   const renderInlineFormatting = (text) => {
     if (!text) return null;
-    // Split on **bold** patterns
     const parts = text.split(/(\*\*[^*]+\*\*)/g);
     return parts.map((part, i) => {
       const boldMatch = part.match(/^\*\*(.+)\*\*$/);
       if (boldMatch) {
-        return <strong key={i} className="font-semibold text-gray-900">{boldMatch[1]}</strong>;
+        return <strong key={i} className="font-semibold text-slate-900">{boldMatch[1]}</strong>;
       }
       return <span key={i}>{part}</span>;
     });
@@ -287,27 +254,31 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
 
   return (
     <div className="flex-1 min-h-0 overflow-y-scroll custom-scrollbar p-4 space-y-4 bg-background">
+      {/* Empty state */}
       {messages.length === 0 && !isStreaming && (
-        <div className="flex flex-col items-center justify-center h-full text-center">
-          <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4">
-            <Bot className="w-8 h-8 text-primary" />
+        <div className="flex flex-col items-center justify-center h-full text-center px-4">
+          <div className="w-20 h-20 bg-gradient-to-br from-teal-100 to-teal-50 rounded-2xl flex items-center justify-center mb-5 shadow-sm">
+            <ShieldCheck className="w-10 h-10 text-teal-600" strokeWidth={1.5} />
           </div>
-          <h2 className="text-xl font-semibold text-dark mb-2">
-            Clinical Agent Assistant
+          <h2 className="text-2xl font-bold text-slate-900 mb-1.5 tracking-tight">
+            SafeToSay
           </h2>
-          <p className="text-muted max-w-md">
-            Ask me any medical questions. I'll provide evidence-based responses
-            with citations and clear reasoning.
+          <p className="text-slate-500 max-w-md text-sm leading-relaxed mb-1">
+            Evidence-based medical knowledge with multi-layered safety evaluation.
           </p>
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-3 max-w-lg">
+          <p className="text-xs text-slate-400 mb-8">
+            Every response passes through scope classification, knowledge boundary analysis, and safety gates.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-w-lg w-full">
             <ExamplePrompt text="What are the symptoms of type 2 diabetes?" onClick={onFollowUpClick} />
             <ExamplePrompt text="How do beta-blockers work?" onClick={onFollowUpClick} />
-            <ExamplePrompt text="What's the treatment for hypertension?" onClick={onFollowUpClick} />
+            <ExamplePrompt text="Chest pain differential diagnosis" onClick={onFollowUpClick} />
             <ExamplePrompt text="What is amoxicillin used for?" onClick={onFollowUpClick} />
           </div>
         </div>
       )}
 
+      {/* Messages */}
       {messages.map((message, index) => (
         <MessageBubble
           key={index}
@@ -321,14 +292,14 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
 
       {/* Progress steps during streaming */}
       {progressSteps.length > 0 && isStreaming && (
-        <div className="flex items-start space-x-3 mb-4">
-          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-            <Bot className="w-4 h-4 text-primary" />
+        <div className="flex items-start space-x-3 mb-4 message-animate">
+          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center">
+            <Bot className="w-4 h-4 text-teal-600" />
           </div>
           <div className="flex-1 max-w-3xl">
-            <div className="bg-blue-50 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-blue-100">
-              <div className="space-y-3">
-                <div className="text-sm font-medium text-blue-900 mb-2">Processing your query...</div>
+            <div className="bg-teal-50 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-teal-100">
+              <div className="space-y-2.5">
+                <div className="text-xs font-semibold text-teal-800 uppercase tracking-wider mb-1">Processing Pipeline</div>
                 {progressSteps.map((step, index) => (
                   <ProgressStep key={step.step} step={step} index={index} />
                 ))}
@@ -340,23 +311,23 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
 
       {/* Streaming message */}
       {isStreaming && (
-        <div className="flex items-start space-x-3">
-          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-            <Bot className="w-4 h-4 text-primary" />
+        <div className="flex items-start space-x-3 message-animate">
+          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center">
+            <Bot className="w-4 h-4 text-teal-600" />
           </div>
           <div className="flex-1 max-w-3xl">
-            <div className="bg-light rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-gray-100">
+            <div className="bg-white rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-slate-200">
               {streamingMessage ? (
-                <div className="text-dark">
+                <div className="text-slate-800">
                   {renderStructuredText(streamingMessage)}
-                  <span className="inline-block w-2 h-4 bg-primary ml-1 typing-indicator" />
+                  <span className="inline-block w-1.5 h-4 bg-teal-500 ml-1 rounded-sm typing-indicator" />
                 </div>
               ) : (
-                <div className="flex items-center space-x-2 text-muted">
+                <div className="flex items-center space-x-2 text-slate-400">
                   <div className="flex space-x-1">
-                    <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    <span className="w-2 h-2 bg-teal-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-2 h-2 bg-teal-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-2 h-2 bg-teal-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                   </div>
                   <span className="text-sm">Thinking...</span>
                 </div>
@@ -366,7 +337,6 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
         </div>
       )}
 
-      {/* Scroll anchor */}
       <div ref={bottomRef} />
     </div>
   );
@@ -375,28 +345,39 @@ const MessageList = ({ messages, streamingMessage, isStreaming, progressSteps = 
 const MessageBubble = ({ message, formatTimestamp, renderStructuredText, onFollowUpClick, isLatest }) => {
   const isUser = message.role === 'user';
   const isError = message.isError;
+  const isRefusal = message.isRefusal;
   const sources = message.sources || [];
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} message-animate`}>
       <div className={`flex items-start gap-3 max-w-[80%] ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
         {/* Avatar */}
-        <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isUser ? 'bg-primary' : isError ? 'bg-red-100' : 'bg-primary/10'
+        <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isUser
+            ? 'bg-gradient-to-br from-teal-600 to-teal-700'
+            : isError
+              ? 'bg-red-100'
+              : isRefusal
+                ? 'bg-amber-100'
+                : 'bg-teal-100'
           }`}>
           {isUser ? (
             <User className="w-4 h-4 text-white" />
+          ) : isRefusal ? (
+            <ShieldAlert className="w-4 h-4 text-amber-600" />
           ) : (
-            <Bot className={`w-4 h-4 ${isError ? 'text-red-500' : 'text-primary'}`} />
+            <Bot className={`w-4 h-4 ${isError ? 'text-red-500' : 'text-teal-600'}`} />
           )}
         </div>
 
         {/* Message content */}
         <div className="flex flex-col">
           <div className={`rounded-2xl px-4 py-3 shadow-sm relative ${isUser
-              ? 'bg-primary text-white rounded-tr-sm'
+              ? 'bg-gradient-to-br from-teal-600 to-teal-700 text-white rounded-tr-sm'
               : isError
                 ? 'bg-red-50 text-red-700 rounded-tl-sm border border-red-200'
-                : 'bg-white text-dark rounded-tl-sm border border-gray-200'
+                : isRefusal
+                  ? 'bg-amber-50 text-amber-800 rounded-tl-sm border border-amber-200'
+                  : 'bg-white text-slate-800 rounded-tl-sm border border-slate-200'
             }`}>
             {isUser ? (
               <p className="whitespace-pre-wrap text-sm">{message.content}</p>
@@ -406,37 +387,34 @@ const MessageBubble = ({ message, formatTimestamp, renderStructuredText, onFollo
 
             {/* Sources / Citations inside bubble */}
             {!isUser && sources.length > 0 && (
-              <div className="mt-4 pt-3 border-t border-gray-100">
-                <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1">
+              <div className="mt-4 pt-3 border-t border-slate-100">
+                <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
                   <ExternalLink className="w-3 h-3" />
                   Sources & Citations
                 </h5>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {sources.map((source, idx) => (
                     <a
                       key={idx}
                       href={source.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-start gap-2 p-2 rounded-lg bg-gray-50 hover:bg-pink-50 border border-gray-100 hover:border-pink-200 transition-colors group"
+                      className="flex items-start gap-2 p-2 rounded-lg bg-slate-50 hover:bg-teal-50 border border-slate-100 hover:border-teal-200 transition-colors group"
                     >
-                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-pink-100 text-pink-600 text-xs font-bold flex items-center justify-center mt-0.5">
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-teal-100 text-teal-700 text-xs font-bold flex items-center justify-center mt-0.5">
                         {idx + 1}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium text-gray-800 group-hover:text-pink-700 truncate">
+                        <p className="text-xs font-medium text-slate-700 group-hover:text-teal-700 truncate">
                           {source.title}
                         </p>
                         {source.snippet && (
-                          <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">
+                          <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">
                             {source.snippet}
                           </p>
                         )}
-                        <p className="text-xs text-pink-500 mt-0.5 truncate opacity-0 group-hover:opacity-100 transition-opacity">
-                          {source.url}
-                        </p>
                       </div>
-                      <ExternalLink className="w-3 h-3 text-gray-400 group-hover:text-pink-500 flex-shrink-0 mt-1" />
+                      <ExternalLink className="w-3 h-3 text-slate-300 group-hover:text-teal-500 flex-shrink-0 mt-1" />
                     </a>
                   ))}
                 </div>
@@ -446,7 +424,7 @@ const MessageBubble = ({ message, formatTimestamp, renderStructuredText, onFollo
 
           {/* Timestamp */}
           {message.timestamp && (
-            <p className={`text-xs text-muted mt-1 ${isUser ? 'text-right' : 'text-left'}`}>
+            <p className={`text-[11px] text-slate-400 mt-1 ${isUser ? 'text-right' : 'text-left'}`}>
               {formatTimestamp(message.timestamp)}
             </p>
           )}
@@ -458,13 +436,13 @@ const MessageBubble = ({ message, formatTimestamp, renderStructuredText, onFollo
 
 const ExamplePrompt = ({ text, onClick }) => (
   <div
-    className="bg-white border border-gray-200 rounded-lg p-3 text-sm text-muted hover:border-primary hover:text-primary cursor-pointer transition-colors"
+    className="bg-white border border-slate-200 rounded-xl p-3 text-sm text-slate-500 hover:border-teal-300 hover:text-teal-700 hover:bg-teal-50/50 cursor-pointer transition-all group"
     onClick={() => onClick && onClick(text)}
     role="button"
     tabIndex={0}
     onKeyDown={(e) => e.key === 'Enter' && onClick && onClick(text)}
   >
-    {text}
+    <span className="group-hover:translate-x-0.5 inline-block transition-transform">{text}</span>
   </div>
 );
 
@@ -472,31 +450,31 @@ const ProgressStep = ({ step, index }) => {
   const getStatusIcon = () => {
     switch (step.status) {
       case 'completed':
-        return <CheckCircle className="w-4 h-4 text-green-500" />;
+        return <CheckCircle className="w-4 h-4 text-teal-500" />;
       case 'running':
-        return <Loader className="w-4 h-4 text-blue-500 animate-spin" />;
+        return <Loader className="w-4 h-4 text-teal-600 animate-spin" />;
       case 'error':
         return <AlertCircle className="w-4 h-4 text-red-500" />;
       default:
-        return <div className="w-4 h-4 border-2 border-gray-300 rounded-full" />;
+        return <div className="w-4 h-4 border-2 border-slate-300 rounded-full" />;
     }
   };
 
   const getStatusColor = () => {
     switch (step.status) {
       case 'completed':
-        return 'text-green-700';
+        return 'text-teal-700';
       case 'running':
-        return 'text-blue-700';
+        return 'text-teal-800';
       case 'error':
         return 'text-red-700';
       default:
-        return 'text-gray-600';
+        return 'text-slate-500';
     }
   };
 
   return (
-    <div className="flex items-start space-x-3">
+    <div className="flex items-start space-x-2.5 progress-animate">
       <div className="mt-0.5">
         {getStatusIcon()}
       </div>
@@ -504,11 +482,11 @@ const ProgressStep = ({ step, index }) => {
         <div className={`text-sm font-medium ${getStatusColor()}`}>
           {step.title}
         </div>
-        <div className="text-xs text-gray-600 mt-1">
+        <div className="text-xs text-slate-500 mt-0.5">
           {step.description}
         </div>
         {step.result && step.status === 'completed' && (
-          <div className="text-xs text-gray-500 mt-1">
+          <div className="text-xs text-slate-400 mt-0.5 font-mono">
             {typeof step.result === 'object' ? JSON.stringify(step.result, null, 2) : step.result}
           </div>
         )}
