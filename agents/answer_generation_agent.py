@@ -249,11 +249,12 @@ def generate_constrained_answer(
             }
             for src in answer_input.sources
         ]
-    
+
     return AnswerGenerationOutput(
         draft_answer=draft_answer,
         sources=sources
     )
+
 
 def _extract_answer_from_output(generated_text: str, full_prompt: str, answer_input) -> str:
     """Extract only the actual answer from model output, stripping all prompt echoes."""

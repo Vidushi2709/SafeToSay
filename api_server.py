@@ -50,7 +50,8 @@ class ThreadInfo(BaseModel):
 class QueryRequest(BaseModel):
     query: str
     thread_id: Optional[str] = None
-    evidence: List[str] = []
+    evidence: List[str] = []  # Optional - if not provided, Tavily search will be used
+    use_tavily_search: bool = True  # Enable Tavily search by default
 
 class ThreadResponse(BaseModel):
     thread_id: str
@@ -206,51 +207,12 @@ def stream_response_generator(response_text: str) -> Generator[str, None, None]:
 
 def get_fallback_evidence(query: str) -> list[str]:
     """
-    Provide fallback evidence snippets when none are provided.
-    In production, this would call a RAG system (vector DB, BM25, etc.)
+    Provide minimal fallback evidence when Tavily search is disabled.
+    In production with Tavily enabled, this function is not used.
+    The clinical pipeline will use Tavily search to get real evidence.
     """
-    query_lower = query.lower()
-    
-    # Simple keyword-based evidence mock
-    evidence_db = {
-        "amoxicillin": [
-            "Amoxicillin is a beta-lactam antibiotic commonly used for bacterial infections. Typical dosing for pneumonia is 500mg-1g three times daily for 7-14 days depending on severity and patient factors.",
-            "Amoxicillin should be used with caution in patients with penicillin allergy history. Cross-reactivity with cephalosporins exists but is uncommon.",
-            "For community-acquired pneumonia, amoxicillin may be considered for non-severe cases in outpatient settings, though respiratory fluoroquinolones or other agents may be preferred depending on local resistance patterns."
-        ],
-        "beta blocker": [
-            "Beta-blockers, particularly non-selective ones, can cause bronchoconstriction in patients with asthma or COPD and should generally be avoided in these populations.",
-            "Cardioselective beta-blockers (e.g., metoprolol, atenolol) have lower risk of airway obstruction compared to non-selective agents, though caution is still advised.",
-            "Alternative antihypertensive agents such as ACE inhibitors, calcium channel blockers, or diuretics are typically preferred for patients with asthma or reactive airway disease."
-        ],
-        "diabetes": [
-            "Diabetes mellitus is a metabolic disorder characterized by elevated blood glucose levels due to insufficient insulin production, insulin resistance, or both.",
-            "Type 1 diabetes results from autoimmune destruction of pancreatic beta cells, while Type 2 diabetes is primarily due to insulin resistance with relative insulin deficiency.",
-            "Management includes lifestyle modifications, glucose monitoring, and pharmacotherapy with various agents including metformin, sulfonylureas, GLP-1 agonists, and insulin."
-        ],
-        "hypertension": [
-            "Hypertension is persistently elevated blood pressure, defined as systolic ≥130 mmHg or diastolic ≥80 mmHg according to recent guidelines.",
-            "First-line agents for hypertension typically include ACE inhibitors, ARBs, calcium channel blockers, and thiazide diuretics.",
-            "Treatment goals and medication choices should be individualized based on cardiovascular risk factors, comorbidities, and patient tolerance."
-        ],
-        "chest pain": [
-            "Chest pain has multiple etiologies including acute coronary syndrome, pulmonary embolism, pneumonia, musculoskeletal pain, and gastroesophageal reflux disease.",
-            "Acute evaluation typically includes clinical history, physical examination, electrocardiography, and troponin measurement to assess for myocardial infarction.",
-            "Further testing such as stress testing, coronary angiography, or imaging may be indicated based on clinical presentation and initial findings."
-        ]
-    }
-    
-    # Find matching evidence based on keywords
-    for key, snippets in evidence_db.items():
-        if key in query_lower:
-            return snippets
-    
-    # Default evidence for any query
-    return [
-        f"Evidence-based analysis of: {query}",
-        "This response is based on medical literature and clinical guidelines.",
-        "Individual patient presentation may require additional evaluation and customization of recommendations."
-    ]
+    # Return empty list - Tavily search will be used in the pipeline
+    return []
 
 def is_simple_factual_question(query: str) -> bool:
     """
@@ -336,27 +298,48 @@ async def chat_stream(request: QueryRequest, background_tasks: BackgroundTasks):
             # Check if this is a simple factual question
             is_simple = is_simple_factual_question(request.query)
             
-            # Use provided evidence or get fallback evidence
-            evidence = request.evidence or get_fallback_evidence(request.query)
+            # Use provided evidence or let the pipeline use Tavily search
+            evidence = request.evidence if request.evidence else None
             
-            # Send status update
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Starting clinical analysis...'})}\n\n"
+            # Create progress callback for step-by-step updates
+            def progress_callback(progress_data):
+                # Send progress update to frontend
+                yield f"data: {json.dumps({'type': 'progress', 'progress': progress_data})}\n\n"
+            
+            # Send initial status update
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Initializing clinical analysis pipeline...'})}\n\n"
             
             # Run the clinical pipeline in executor to avoid blocking
             loop = asyncio.get_event_loop()
             run_clinical_pipeline = get_clinical_pipeline()
+            
+            # We need to collect progress updates since they can't yield from executor
+            progress_updates = []
+            def sync_progress_callback(progress_data):
+                progress_updates.append(progress_data)
+            
             result = await loop.run_in_executor(
                 None,
                 lambda: run_clinical_pipeline(
                     clinical_query=request.query,
                     evidence=evidence,
-                    skip_strict_evaluation=is_simple
+                    skip_strict_evaluation=is_simple,
+                    use_tavily_search=request.use_tavily_search,
+                    progress_callback=sync_progress_callback
                 )
             )
             
+            # Send collected progress updates
+            for progress_data in progress_updates:
+                yield f"data: {json.dumps({'type': 'progress', 'progress': progress_data})}\n\n"
             
-            # Send metadata first
+            # Send metadata first (includes sources)
             yield f"data: {json.dumps({'type': 'metadata', 'data': result})}\n\n"
+            
+            # Send sources separately for easy frontend access
+            sources = result.get('sources', [])
+            if sources:
+                yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
             
             # Stream the response
             response_text = result.get('draft_answer', '')
@@ -418,15 +401,17 @@ async def chat(request: QueryRequest):
         # Check if this is a simple factual question
         is_simple = is_simple_factual_question(request.query)
         
-        # Use provided evidence or get fallback evidence
-        evidence = request.evidence or get_fallback_evidence(request.query)
+        # Use provided evidence or let the pipeline use Tavily search
+        evidence = request.evidence if request.evidence else None
         
         # Run the clinical pipeline (skip strict evaluation for simple questions)
         run_clinical_pipeline = get_clinical_pipeline()
         result = run_clinical_pipeline(
             clinical_query=request.query,
             evidence=evidence,
-            skip_strict_evaluation=is_simple
+            skip_strict_evaluation=is_simple,
+            use_tavily_search=request.use_tavily_search,
+            progress_callback=None  # No real-time updates for non-streaming
         )
         
         response_text = result.get('draft_answer', '')
@@ -445,6 +430,7 @@ async def chat(request: QueryRequest):
         return {
             'thread_id': thread_id,
             'response': response_text,
+            'sources': result.get('sources', []),  # Include sources in response
             **result
         }
     
