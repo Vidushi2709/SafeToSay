@@ -42,3 +42,4 @@ Thumbs.db
 # IDE files
 .vscode/
 .idea/
+agents\.env
