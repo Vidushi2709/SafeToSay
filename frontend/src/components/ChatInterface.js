@@ -34,7 +34,7 @@ const ChatInterface = ({ threadId, onMessageSent, onThreadCreated, apiBaseUrl, o
 
     try {
       setLoading(true);
-      const response = await fetch(`${apiBaseUrl}/threads/${threadId}`);
+      const response = await fetch(`${apiBaseUrl}/api/v1/threads/${threadId}`);
       if (response.ok) {
         const threadData = await response.json();
         setMessages(threadData.messages || []);
@@ -64,7 +64,7 @@ const ChatInterface = ({ threadId, onMessageSent, onThreadCreated, apiBaseUrl, o
     isRefusalRef.current = false;
 
     try {
-      const response = await fetch(`${apiBaseUrl}/chat/stream`, {
+      const response = await fetch(`${apiBaseUrl}/api/v1/chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

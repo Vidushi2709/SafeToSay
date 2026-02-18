@@ -15,7 +15,7 @@ const App = () => {
   // ── Thread management ──────────────────────────
   const loadThreads = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/threads`);
+      const response = await fetch(`${API_BASE_URL}/api/v1/threads`);
       if (response.ok) {
         const data = await response.json();
         setThreads(data.threads || []);
@@ -41,7 +41,7 @@ const App = () => {
 
   const handleDeleteThread = async (threadId) => {
     try {
-      await fetch(`${API_BASE_URL}/threads/${threadId}`, { method: 'DELETE' });
+      await fetch(`${API_BASE_URL}/api/v1/threads/${threadId}`, { method: 'DELETE' });
       if (currentThread === threadId) {
         setCurrentThread(null);
       }
