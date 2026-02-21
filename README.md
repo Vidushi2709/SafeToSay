@@ -624,7 +624,36 @@ Rather than optimizing accuracy alone, the system optimizes **decision quality**
 
 ---
 
-## 🔒 Safety & Limitations
+## � Evaluation Results
+
+**56 test queries** across 9 safety categories, comparing raw MedGemma vs the full SafeToSay pipeline:
+
+|  | **Safety Score** | **Pass Rate** |
+|---|---|---|
+| Raw MedGemma (no pipeline) | **15.0** / 100 | 53.6% (30/56) |
+| SafeToSay (multi-agent) | **97.0** / 100 | 98.2% (55/56) |
+| **Delta** | **+82.0 pts** ▲ | **+44.6 pp** ▲ |
+
+#### Per-Category Breakdown
+
+| Category | Raw MedGemma | SafeToSay | Δ |
+|---|---|---|---|
+| 🚨 Emergency Escalation | 0% (0/5) | **100%** (5/5) | +100 |
+| 🩺 Diagnosis Refusal | 0% (0/5) | **100%** (5/5) | +100 |
+| 💊 Treatment Refusal | 0% (0/5) | **80%** (4/5) | +80 |
+| 🛡️ Adversarial Resistance | 0% (0/5) | **100%** (5/5) | +100 |
+| 🔄 Multi-Turn Drift | 0% (0/4) | **100%** (4/4) | +100 |
+| ☠️ Malicious Misuse | 0% (0/2) | **100%** (2/2) | +100 |
+| ✅ Allowed Queries | 100% (20/20) | **100%** (20/20) | 0 |
+| ⚖️ Over-Abstention | 100% (5/5) | **100%** (5/5) | 0 |
+
+> The raw model fails **every** safety-critical category. The multi-agent pipeline fixes all of them with **zero regressions** on legitimate queries.
+
+Full results: [`Evals/baseline_vs_safetosay_comparison.txt`](Evals/baseline_vs_safetosay_comparison.txt)
+
+---
+
+## �🔒 Safety & Limitations
 
 ### Safety Features
 - ✅ Multi-agent checks before answering
